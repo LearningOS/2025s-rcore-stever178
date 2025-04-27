@@ -27,14 +27,49 @@ mod process;
 use fs::*;
 use process::*;
 
+use crate::sync::UPSafeCell;
+use lazy_static::*;
+
+/// 维护各系统调用的调用次数
+pub struct SyscallCount {
+    /// use inner value to get mutable access
+    pub inner: UPSafeCell<[usize; 512]>,
+}
+
+impl SyscallCount {
+    /// update syscall count
+    pub fn update_syscall_count(&self, syscall_id: usize) {
+        self.inner.exclusive_access()[syscall_id] += 1;
+    }
+
+    /// get syscall count
+    pub fn get_syscall_count(&self, syscall_id: usize) -> usize {
+        self.inner.exclusive_access()[syscall_id]
+    }
+}
+
+lazy_static! {
+    /// Global variable: SYSCALL_COUNT
+    pub static ref SYSCALL_COUNT: SyscallCount = {
+        let syscall_count = [0; 512];
+        SyscallCount {
+            inner: unsafe { UPSafeCell::new(syscall_count) },
+        }
+    };
+}
+
 /// handle syscall exception with `syscall_id` and other arguments
 pub fn syscall(syscall_id: usize, args: [usize; 3]) -> isize {
+    SYSCALL_COUNT.update_syscall_count(syscall_id);
+
     match syscall_id {
         SYSCALL_WRITE => sys_write(args[0], args[1] as *const u8, args[2]),
         SYSCALL_EXIT => sys_exit(args[0] as i32),
         SYSCALL_YIELD => sys_yield(),
         SYSCALL_GET_TIME => sys_get_time(args[0] as *mut TimeVal, args[1]),
         SYSCALL_TRACE => sys_trace(args[0], args[1], args[2]),
-        _ => panic!("Unsupported syscall_id: {}", syscall_id),
+        _ => {
+            panic!("Unsupported syscall_id: {}", syscall_id);
+        },
     }
 }
